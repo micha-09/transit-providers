@@ -1,0 +1,18 @@
+{
+  "name": "transit-providers",
+  "version": "1.0.0",
+  "description": "Fahrplan-Provider-Adapter (Transitous/MOTIS 2) mit einheitlichem Provider-Interface",
+  "type": "module",
+  "main": "src/transitous.js",
+  "exports": {
+    ".": "./src/transitous.js"
+  },
+  "repository": "github:micha-09/transit-providers",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "demo": "npx serve demo"
+  }
+}
