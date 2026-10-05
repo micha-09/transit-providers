@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transitous Demo – Abfahrten &amp; Routen</title>
+<style>
+:root{--bg:#0b1220;--panel:#111a2e;--border:#24314f;--text:#e2e8f0;--muted:#8ea0be;--ok:#22c55e;--warn:#fbbf24;--err:#f87171;--accent:#0d9488}
+*{box-sizing:border-box}
+body{margin:0;padding:1rem;max-width:42rem;margin-inline:auto;font:16px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text)}
+h1{font-size:1.25rem}h2{font-size:1rem;color:var(--muted);margin:1.5rem 0 .5rem}
+input,button{font:inherit;padding:.5rem .7rem;border:1px solid var(--border);border-radius:.5rem;background:var(--panel);color:var(--text)}
+button{cursor:pointer}button:hover{border-color:var(--accent)}
+form{display:flex;gap:.5rem;flex-wrap:wrap}
+input[type=text]{flex:1;min-width:12rem}
+ul{list-style:none;margin:.5rem 0;padding:0}
+li.dep,li.trip{display:flex;align-items:baseline;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--border);border-radius:.5rem;margin-bottom:.35rem;background:var(--panel);flex-wrap:wrap;min-width:0}
+.time{font-variant-numeric:tabular-nums;font-weight:600;min-width:4.2rem}
+.time small{display:block;font-weight:400;color:var(--muted);text-decoration:line-through}
+.punctual{color:var(--ok)}.delayed{color:var(--warn)}.cancel{color:var(--err);text-decoration:line-through}
+.delay-badge{color:var(--err);font-size:.8rem}
+.rt-badge{color:var(--ok);font-size:.75rem;border:1px solid var(--ok);border-radius:.4rem;padding:0 .3rem}
+.sched-badge{color:var(--muted);font-size:.75rem}
+.line{background:var(--accent);color:#fff;border-radius:.4rem;padding:0 .45rem;font-weight:600;font-size:.85rem}
+.meta{color:var(--muted);font-size:.85rem;min-width:0;overflow-wrap:anywhere}
+.leg{color:var(--muted);font-size:.85rem}
+footer{margin-top:2rem;padding-top:1rem;border-top:1px solid var(--border);font-size:.8rem;color:var(--muted)}
+footer a{color:var(--accent)}
+#status{color:var(--muted);font-size:.85rem;min-height:1.2em}
+</style>
+</head>
+<body>
+<h1>Transitous-Demo</h1>
+<p id="status">Client-only: ruft api.transitous.org direkt aus dem Browser auf (CORS offen). Demo des Adapters aus <a href="https://github.com/micha-09/transit-providers" style="color:var(--accent)">transit-providers</a>.</p>
+
+<h2>Abfahrten</h2>
+<form id="board-form">
+  <input type="text" id="stop-input" placeholder="Haltestelle, z. B. Hamburg Hbf" autocomplete="off">
+  <button type="submit">Suchen</button>
+</form>
+<ul id="board"></ul>
+
+<h2>Verbindung</h2>
+<form id="trip-form">
+  <input type="text" id="from-input" placeholder="Von" autocomplete="off">
+  <input type="text" id="to-input" placeholder="Nach" autocomplete="off">
+  <button type="submit">Planen</button>
+</form>
+<ul id="trips"></ul>
+
+<footer>
+  Fahrplandaten: <a href="https://transitous.org/sources/" rel="noopener">Transitous – Datenquellen</a> (u.&nbsp;a. GTFS/GTFS-RT-Feeds der Verkehrsverbünde, OpenStreetMap).
+  Demo ist Teil des <a href="https://github.com/micha-09/transit-providers" rel="noopener">transit-providers</a>-Repos (MIT).
+</footer>
+
+<script type="module">
+const API = 'https://api.transitous.org/api';
+// Policy: Browser können keinen User-Agent setzen; die Demo läuft daher
+// mit Referer (GitHub Pages / localhost), die Quellen-Attribution steht im Footer.
+
+const $ = (id) => document.getElementById(id);
+const fmt = (iso) => iso ? new Date(iso).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'}) : '';
+
+async function geocode(text) {
+  const r = await fetch(`${API}/v1/geocode?text=${encodeURIComponent(text)}`);
+  if (!r.ok) throw new Error('geocode HTTP ' + r.status);
+  return (await r.json()).filter(x => (x.id || '').includes('de:'));
+}
+
+async function showBoard(stopName) {
+  const board = $('board');
+  board.replaceChildren();
+  const status = $('status');
+  status.textContent = 'Lade Abfahrten …';
+  try {
+    const stops = await geocode(stopName);
+    const stop = stops[0];
+    if (!stop) { status.textContent = 'Keine Haltestelle gefunden.'; return; }
+    const r = await fetch(`${API}/v1/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=20`);
+    if (!r.ok) throw new Error('stoptimes HTTP ' + r.status);
+    const times = (await r.json()).stopTimes ?? [];
+    status.textContent = `${stop.name} – ${times.length} Abfahrten`;
+    for (const d of times) {
+      const p = d.place ?? {};
+      const planned = p.scheduledDeparture ?? p.departure;
+      const predicted = p.departure;
+      const delay = predicted && planned ? Math.round((new Date(predicted) - new Date(planned)) / 60000) : 0;
+      const li = document.createElement('li');
+      li.className = 'dep';
+      const timeDiv = document.createElement('div');
+      timeDiv.className = 'time';
+      if (p.cancelled) {
+        timeDiv.innerHTML = `<span class="cancel">${fmt(planned)}</span><small class="cancel">fällt aus</small>`;
+      } else if (delay > 0) {
+        timeDiv.innerHTML = `<span class="delayed">${fmt(predicted)}</span><small>${fmt(planned)}</small>`;
+      } else {
+        timeDiv.innerHTML = `<span class="punctual">${fmt(predicted)}</span>`;
+      }
+      const line = document.createElement('span');
+      line.className = 'line';
+      line.textContent = d.routeShortName ?? d.mode;
+      const meta = document.createElement('div');
+      meta.className = 'meta grow';
+      meta.innerHTML = `${d.headsign ?? ''}<br>${d.realTime ? '<span class="rt-badge">Echtzeit</span>' : '<span class="sched-badge">Sollzeit</span>'}${delay > 0 ? ` <span class="delay-badge">+${delay} min</span>` : ''}`;
+      li.append(timeDiv, line, meta);
+      board.appendChild(li);
+    }
+  } catch (e) {
+    status.textContent = 'Fehler: ' + e.message;
+  }
+}
+
+async function showTrips(fromName, toName) {
+  const ul = $('trips');
+  ul.replaceChildren();
+  const status = $('status');
+  status.textContent = 'Plane Verbindung …';
+  try {
+    const [froms, tos] = await Promise.all([geocode(fromName), geocode(toName)]);
+    const from = froms[0], to = tos[0];
+    if (!from || !to) { status.textContent = 'Haltestelle nicht gefunden.'; return; }
+    const r = await fetch(`${API}/v1/plan?fromPlace=${encodeURIComponent(from.id)}&toPlace=${encodeURIComponent(to.id)}&time=${encodeURIComponent(new Date().toISOString())}&n=5`);
+    if (!r.ok) throw new Error('plan HTTP ' + r.status);
+    const its = (await r.json()).itineraries ?? [];
+    status.textContent = `${its.length} Verbindungen ${from.name} → ${to.name}`;
+    for (const it of its) {
+      const li = document.createElement('li');
+      li.className = 'trip';
+      const timeDiv = document.createElement('div');
+      timeDiv.className = 'time';
+      timeDiv.innerHTML = `<span class="punctual">${fmt(it.legs[0].startTime)}</span><small>${fmt(it.legs.at(-1).endTime)}</small>`;
+      const meta = document.createElement('div');
+      meta.className = 'meta grow';
+      const legs = it.legs.map(l => `${l.routeShortName ?? (l.mode === 'WALK' ? '↦' : l.mode)} ${fmt(l.startTime)}`).join(' → ');
+      const dur = Math.round(it.duration / 60);
+      meta.innerHTML = `${legs}<br>${dur} min · ${it.transfers} Umstiege`;
+      li.append(timeDiv, meta);
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    status.textContent = 'Fehler: ' + e.message;
+  }
+}
+
+$('board-form').addEventListener('submit', (e) => { e.preventDefault(); showBoard($('stop-input').value); });
+$('trip-form').addEventListener('submit', (e) => { e.preventDefault(); showTrips($('from-input').value, $('to-input').value); });
+</script>
+</body>
+</html>
